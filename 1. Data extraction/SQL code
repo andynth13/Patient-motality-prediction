@@ -1,0 +1,225 @@
+--- CTE upd_vitalperiodic to get all vital signs within the valid range and missing vital imputed by carry-forward method
+
+WITH upd_vitalperiodic AS (
+        SELECT 
+            patientunitstayid, 
+            observationoffset,
+            case when temperature >= 26 and temperature <= 45 then temperature else null end as temperature,
+            case when heartrate >= 25 and heartrate <= 350 then heartrate else null end as heartrate,
+            case when respiration >= 0 and respiration <= 300 then respiration else null end as respiration,
+            case when pamean >=14 and pamean <=330 then pamean else null end as pamean,
+            case when saO2 >= 0 and saO2<=100 then saO2 else null end as saO2,
+            case when systemicsystolic >= 0 and systemicsystolic <= 375 then systemicsystolic else null end as system_systolic,
+            case when systemicdiastolic >= 0 and systemicdiastolic <= 375 then systemicdiastolic else null end as system_diastolic,
+            LAST_VALUE(temperature) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_temperature,
+            LAST_VALUE(heartrate) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_heartrate,
+            LAST_VALUE(respiration) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_respiration,
+            LAST_VALUE(pamean) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_pamean,
+            LAST_VALUE(saO2) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_peripheraloxy,
+            LAST_VALUE(systemicsystolic) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_systemicsystolic,
+            LAST_VALUE(systemicdiastolic) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY observationoffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_systemicdiastolic
+        FROM vitalperiodic
+        ORDER BY 1,2 
+),
+
+--- CTE vt to get the median value from upd_vitalperiodic, aggregated by 1h interval
+vt AS (
+    SELECT 
+       upd_vitalperiodic.patientunitstayid,
+       FLOOR(observationoffset / 60) AS interval,    --- Agregated by 1 hour interval
+       median(upd_temperature) as temperature_median,
+       median(upd_heartrate) as heartrate_median,
+       median(upd_respiration) as respiration_median,
+       median(upd_pamean) as mean_arterial_pressure_median,
+       median(upd_peripheraloxy) as peripheraloxy_median,
+       median(upd_systemicsystolic) as system_systolic,
+       median(upd_systemicdiastolic) as system_diastolic
+    FROM upd_vitalperiodic
+    JOIN patient ON upd_vitalperiodic.patientunitstayid = patient.patientunitstayid
+    WHERE observationoffset >0 and observationoffset <= UNITDISCHARGEOFFSET    --- Time recorded of vital signs should be during the time patient is in the ICU only
+    GROUP BY 1,2
+    ORDER BY 1,2
+),
+
+--- CTE upd_laboratory to get all lab result within the valid range and missing result imputed by carry-forward method of the same patientunitstayid
+
+upd_laboratory AS (
+        SELECT 
+            patientunitstayid, 
+            labResultOffset,
+            CASE WHEN labname = 'albumin' and labresult >= 0.6 and labresult <= 6 THEN labresult END AS albumin, 
+            CASE WHEN labname = 'BUN' and labresult >= 1 and labresult <= 250 THEN labresult END AS bun,
+            CASE WHEN labname = 'total bilirubin' and labresult >= 0.1 and labresult <= 60  THEN labresult END AS t_bilirubin,
+            CASE WHEN labname = 'lactate' and labresult >= 0.4 and labresult <= 30  THEN labresult END AS lactate,
+            CASE WHEN labname = 'bicarbonate' and labresult >= 0 and labresult <= 60  THEN labresult END AS bicarbonate,
+            CASE WHEN labname = '-bands' and labresult >= 0 and labresult <= 100  THEN labresult END AS bands,
+            CASE WHEN labname = 'chloride' and labresult > 50 and labresult <= 175  THEN labresult END AS chloride,
+            CASE WHEN labname = 'creatinine' and labresult >= 0.1 and labresult <= 60  THEN labresult END AS creatinine,
+            CASE WHEN labname = 'glucose' and labresult >= 33 and labresult <= 2000  THEN labresult END AS glucose,
+            CASE WHEN labname = 'Hgb' and labresult >= 0 and labresult <= 25  THEN labresult END AS Hgb,
+            CASE WHEN labname = 'Hct' and labresult >= 0 and labresult <= 75  THEN labresult END AS Hct,
+            CASE WHEN labname = 'platelets x 1000' and labresult > 0 and labresult <= 2000  THEN labresult END AS plateletsx1000,
+            CASE WHEN labname = 'potassium' and labresult >= 0 and labresult <= 12  THEN labresult END AS potassium,
+            CASE WHEN labname = 'PTT' and labresult >= 18.8 and labresult <= 150  THEN labresult END AS PTT,      
+            CASE WHEN labname = 'sodium' and labresult >= 50 and labresult <= 225  THEN labresult END AS sodium,
+            CASE WHEN labname = 'WBC x 1000' and labresult > 0 and labresult <= 1000  THEN labresult END AS WBCx1000,
+            LAST_VALUE(albumin) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_albumin,
+            LAST_VALUE(bun) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_bun,
+            LAST_VALUE(t_bilirubin) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_t_bilirubin,
+            LAST_VALUE(lactate) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_lactate,
+            LAST_VALUE(bicarbonate) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_bicarbonate,
+            LAST_VALUE(bands) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_bands,
+            LAST_VALUE(chloride) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_chloride,
+            LAST_VALUE(creatinine) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_creatinine,
+            LAST_VALUE(glucose) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_glucose,
+            LAST_VALUE(Hgb) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_Hgb,
+            LAST_VALUE(Hct) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_Hct,
+            LAST_VALUE(plateletsx1000) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_plateletsx1000,
+            LAST_VALUE(potassium) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_potassium,
+            LAST_VALUE(PTT) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_PTT,
+            LAST_VALUE(sodium) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_sodium,
+            LAST_VALUE(WBCx1000) IGNORE NULLS OVER (PARTITION BY patientunitstayid ORDER BY labResultOffset ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS upd_WBCx1000
+        FROM lab
+        ORDER BY 1,2 
+), 
+
+--- CTE laboratory to get the median value from upd_laboratory, aggregated by 8h interval
+
+laboratory AS (
+       SELECT 
+            upd_laboratory.patientunitstayid,
+            FLOOR(labResultOffset / 480)*8 AS interval,  -- aggregated by 8 hour internal
+            median(albumin) AS albumin_median,
+            median(bun) AS bun_median,
+            median(t_bilirubin) AS t_bilirubin_median,
+            median(bicarbonate) AS bicarbonate_median,
+            median(bands) AS bands_median,
+            median(lactate) AS lactate_median,
+            median(chloride) AS chloride_median,
+            median(creatinine) AS creatinine_median,
+            median(glucose) AS glucose_median,
+            median(Hgb) AS hgb_median,
+            median(Hct) AS hct_median,
+            median(plateletsx1000) AS plateletsx1000_median,
+            median(potassium) AS potassium_median,
+            median(PTT) AS PTT_median,
+            median(sodium) AS sodium_median,
+            median(WBCx1000) AS WBC_median
+        FROM upd_laboratory
+        JOIN patient ON upd_laboratory.patientunitstayid = patient.patientunitstayid
+        WHERE labResultOffset >0 and labResultOffset <= UNITDISCHARGEOFFSET
+        GROUP BY 1,2
+        ORDER BY 1,2
+),        
+
+--- CTE condition_vt to calculate the first time and the last time the vital sign was recorded on 1 patient in their ICU stay
+
+condition_vt AS (
+    SELECT 
+         upd_vitalperiodic.patientunitstayid,
+         MIN(observationoffset) AS firstobservation,
+         MAX(observationoffset) AS lastobservation
+    FROM upd_vitalperiodic
+    JOIN patient ON upd_vitalperiodic.patientunitstayid = patient.patientunitstayid
+    WHERE observationoffset >0 and observationoffset <= UNITDISCHARGEOFFSET
+    GROUP BY 1
+),
+
+--- CTE condition_lab to calculate the first time and the last time the lab was taken on 1 patient in their ICU stay
+
+condition_lab AS (
+    SELECT 
+         upd_laboratory.patientunitstayid,
+         MIN(labResultOffset) AS firstlabresult,
+         MAX(labResultOffset) AS lastlabresult
+    FROM upd_laboratory
+        JOIN patient ON upd_laboratory.patientunitstayid = patient.patientunitstayid
+        WHERE labResultOffset >0 and labResultOffset <= UNITDISCHARGEOFFSET
+        GROUP BY 1
+),
+
+--- CTE vt_lab join both condition_vt and condition_lab to set condition take only patient have vital and lab result longer than 48 hours between the first and the last measurement
+
+vt_lab AS (
+    SELECT condition_vt.patientunitstayid
+    FROM condition_vt
+    JOIN condition_lab ON condition_vt.patientunitstayid = condition_lab.patientunitstayid
+    WHERE (lastobservation - firstobservation) > 2880    --- vital time longer than 48 hours
+         and (lastlabresult - firstlabresult)  > 2880    --- lab time longer than 48 hours
+),          
+
+--- CTE final_patient to get only the first time visit to ICU of a patient, and that visit should last longer than 48 hours
+
+final_patient AS (
+    SELECT 
+        ptn.patientunitstayid, 
+        ptn.unitdischargestatus, 
+        ptn.unitdischargeoffset,
+        ptn.age,
+        ptn.gender,
+        ptn.ethnicity
+    FROM (
+        SELECT *,
+               ROW_NUMBER() OVER (PARTITION BY uniquepid ORDER BY hospitaldischargeyear, patienthealthsystemstayid, unitvisitnumber) AS row_num
+        FROM patient
+    ) ptn
+    JOIN vt_lab ON vt_lab.patientunitstayid = ptn.patientunitstayid
+    WHERE row_num = 1 --- Get the first time visit ICU only
+    AND unitdischargeoffset >= 2880   ---ICU stays longer than 48 hours
+    ORDER BY vt_lab.patientunitstayid
+)    
+
+--- Final query to download data
+-- vital sign
+SELECT 
+      final_patient.patientunitstayid,
+      final_patient.unitdischargestatus,
+      interval,
+      temperature_median,
+      heartrate_median,
+      respiration_median,
+      mean_arterial_pressure_median,
+      peripheraloxy_median,
+      system_systolic,
+      system_diastolic
+FROM vt
+JOIN final_patient ON vt.patientunitstayid = final_patient.patientunitstayid
+WHERE interval >= ((UNITDISCHARGEOFFSET/60) - 24)
+ORDER BY final_patient.patientunitstayid, interval
+
+-- laboratory result
+SELECT 
+      final_patient.patientunitstayid,
+      final_patient.unitdischargestatus,
+      interval,
+      albumin_median,
+      bun_median,
+      t_bilirubin_median,
+      bicarbonate_median,
+      bands_median,
+      lactate_median,
+      chloride_median,
+      creatinine_median,
+      glucose_median,
+      hgb_median,
+      hct_median,
+      plateletsx1000_median,
+      potassium_median,
+      PTT_median,
+      sodium_median,
+      WBC_median
+FROM laboratory
+JOIN final_patient ON laboratory.patientunitstayid = final_patient.patientunitstayid
+WHERE interval >= ((UNITDISCHARGEOFFSET/60) - 24)
+ORDER BY final_patient.patientunitstayid, interval
+
+-- patient info
+SELECT 
+      patientunitstayid,
+      age,
+      ethnicity,
+      gender,
+      unitdischargeoffset,
+      unitdischargestatus
+FROM final_patient
+ORDER BY final_patient.patientunitstayid
